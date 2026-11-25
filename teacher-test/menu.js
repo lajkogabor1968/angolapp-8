@@ -1,0 +1,2 @@
+'use strict';
+(function(){const b=document.getElementById('exam-start'),info=document.getElementById('exam-info');if(!b||!info)return;const url=window.ANGOLAPP_TEACHER_TEST_URL||'';if(!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(url))return;b.disabled=false;info.textContent='A dolgozat külön nyílik meg. Az eredményeket a tanár látja.';b.addEventListener('click',()=>window.location.assign(url));})();
