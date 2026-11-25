@@ -1,6 +1,6 @@
 'use strict';
 const el = id => document.getElementById(id);
-const sections = ['Olvasmány','Szókincs','Nyelvtan','Reading','Listening','Writing','Gyakorlás','Lecketeszt'];
+const sections = ['Olvasmány','Szókincs','Nyelvtan','Reading','Listening','Writing','Gyakorlás','Lecketeszt','Saját teszt'];
 let slow = load('slow', false);
 let activeAudio = null;
 function load(key, fallback) {
@@ -43,14 +43,14 @@ function stopAudio() {
   if (source) { source.onended = null; try { source.stop(); } catch {} source = null; }
   el('soundStatus').textContent = '';
 }
-async function play(trigger, group, from, to) {
+async function play(trigger, group, from, to, id) {
   const same = activeAudio === trigger;
   stopAudio();
   if (same) return;
   activeAudio = trigger;
   trigger.textContent = trigger.dataset.idle === '▶' ? '■' : '■ Leállítás';
   trigger.setAttribute('aria-label','Leállítás');
-  const token = playback, id = current().id;
+  const token = playback;
   const track = slow ? id + '-slow' : id;
   const index = (slow ? slowIndex : audioIndex)[id];
   try {
@@ -77,8 +77,8 @@ async function play(trigger, group, from, to) {
     el('soundStatus').textContent='A hang nem indult el. Próbáld újra!';
   }
 }
-function listenButton(group, from, to, caption, label) {
-  const b=button(caption,()=>play(b,group,from,to),'listen');
+function listenButton(group, from, to, caption, label, id=current().id) {
+  const b=button(caption,()=>play(b,group,from,to,id),'listen');
   b.dataset.idle=caption;
   b.dataset.label=label;
   b.setAttribute('aria-label',label);
@@ -112,7 +112,7 @@ function sectionNav() {
   select.value=tab>=3 && tab<=6 ? String(tab) : '';
   select.classList.toggle('selected',select.value!=='');
   select.addEventListener('change',()=>go(Number(select.value)));
-  nav.append(select); addTab(7);
+  nav.append(select); addTab(7); addTab(8);
 }
 function chooseNav(parent, names, selected, action) {
   parent.replaceChildren();
@@ -128,11 +128,12 @@ function activate() {
     unit=i;tab=0;save('lesson',current().id);activate();
   });
   sectionNav();
-  el('lesson').textContent=current().title;
-  el('theme').textContent=current().theme;
+  el('lesson').textContent=tab===8?'Egyéni gyakorlás':current().title;
+  el('theme').textContent=tab===8?'':current().theme;
   if(tab===0) reading();
   else if(tab===1) vocabulary();
   else if(tab===2) grammar();
+  else if(tab===8)customSetup();
   else introduction();
 }
 function readingRows(parent,group) {
@@ -213,13 +214,62 @@ function writingItem(row) {
   }
   return {prompt,answer,alternatives,hint:'Mondatkezdés: '+answer.split(' ').slice(0,2).join(' ')+' …'};
 }
-function vocabItem(i) {
-  const words=current().vocab,dir=level==='normal' && i%2===1?1:0;
+function vocabItem(i,lesson=current()) {
+  const words=lesson.vocab,dir=level==='normal' && i%2===1?1:0;
   const [term,translation]=[words[i][dir],words[i][1-dir]];
   const others=shuffled(words.filter(w=>w[1-dir]!==translation)).slice(0,2).map(w=>w[1-dir]);
   return choices([(dir?'Hogyan mondod angolul? ':'Mit jelent? ')+term,translation,...others]);
 }
+const practiceKinds=['Szókincs','Mondatok és nyelvtan','Olvasásértés','Hallásértés','Írás'];
+let selection;
+function customPool(lesson,kind) {
+  const limit=level==='sni'?2:level==='btmn'?3:Infinity;
+  if(kind===0)return lesson.vocab.map((_,i)=>vocabItem(i,lesson));
+  if(kind===1)return (level==='sni'?lesson.q.slice(0,4):lesson.q).map(q=>choices(q));
+  if(kind===2)return lesson.readQs.slice(0,level==='sni'?2:4).map(q=>choices(q,{read:true,lessonId:lesson.id}));
+  if(kind===3)return lesson.listen.slice(0,limit).map(([script,...q],i)=>choices(q,{audio:i,transcript:script,lessonId:lesson.id}));
+  return lesson.writing.slice(0,limit).map(writingItem);
+}
+function customItems() {
+  const groups=[];
+  for(const u of selection.units)for(const k of selection.kinds)groups.push(shuffled(customPool(lessons[u],k)));
+  const items=[];
+  while(items.length<selection.count){
+    const active=shuffled(groups.filter(group=>group.length));
+    if(!active.length)break;
+    for(const group of active){items.push(group.pop());if(items.length===selection.count)break;}
+  }
+  return shuffled(items);
+}
+function customSetup() {
+  selection ||= {units:[unit],kinds:[0,1],count:10};
+  content.append(node('h3','Saját teszt'));
+  function checkboxes(title,names,key) {
+    const field=node('fieldset');field.append(node('legend',title));
+    names.forEach((name,i)=>{
+      const label=node('label',undefined,'speed');
+      const check=node('input');check.type='checkbox';check.checked=selection[key].includes(i);
+      check.addEventListener('change',()=>{
+        selection[key]=check.checked?[...selection[key],i]:selection[key].filter(j=>j!==i);update();
+      });
+      label.append(check,document.createTextNode(name));field.append(label,document.createTextNode(' '));
+    });
+    content.append(field);
+  }
+  checkboxes('Leckék',lessons.map(l=>l.title),'units');
+  checkboxes('Feladattípusok',practiceKinds,'kinds');
+  const label=node('label','Kérdések száma '),count=node('select');
+  for(const n of [5,10,15,20]){const o=node('option',String(n));o.value=String(n);count.append(o);}
+  count.value=String(selection.count);count.addEventListener('change',()=>{selection.count=Number(count.value);update();});
+  label.append(count);content.append(label);
+  const bar=node('div',undefined,'actions'),start=button('Kezdés',()=>startRound(customItems()),'primary');
+  bar.append(start);content.append(bar);
+  function update(){const n=customItems().length;start.disabled=!n;start.textContent=n?'Kezdés · '+n+' feladat':'Válassz leckét és feladattípust';}
+  update();
+}
+
 function questions() {
+  if(tab===8)return customItems();
   const l=current(), easy=level==='sni', mid=level==='btmn';
   const comprehension=l.readQs.slice(0,easy?2:4).map(row=>choices(row,{read:true}));
   const listening=l.listen.slice(0,easy?2:3).map(([script,...row],i)=>choices(row,{audio:i,transcript:script}));
@@ -261,7 +311,7 @@ function show() {
   const meter=node('progress');meter.max=total;meter.value=round.index;meter.setAttribute('aria-label','Teljesített feladat');content.append(meter);
   if(q.read){
     const r=detail('Olvasmány megnyitása',content);r.open=tab===3||level==='sni';
-    current()[level==='sni'?'short':'reading'].forEach(([en,hu])=>{
+    (lessons.find(l=>l.id===q.lessonId)||current())[level==='sni'?'short':'reading'].forEach(([en,hu])=>{
       r.append(english('p',en));if(level==='sni')r.append(node('p',hu,'note'));
       else if(level==='btmn')detail('Magyarul',r).append(node('p',hu));
     });
@@ -270,7 +320,7 @@ function show() {
   const label=node('p',q.prompt,'question');label.id='taskPrompt';content.append(label);
   if(q.audio!==undefined){
     const bar=node('div',undefined,'reader-tools');
-    bar.append(listenButton('listen',q.audio,q.audio,'▶ Meghallgatás','Hangrészlet meghallgatása'),speedSwitch());
+    bar.append(listenButton('listen',q.audio,q.audio,'▶ Meghallgatás','Hangrészlet meghallgatása',q.lessonId),speedSwitch());
     content.append(bar);
   }
   if(q.context)content.append(english('p',q.context,'en'));
@@ -321,7 +371,9 @@ function finish() {
   }
   const bar=node('div',undefined,'actions');content.append(bar);
   if(round.missed.length)bar.append(button('Hibás feladatok újra ('+round.missed.length+')',()=>startRound(round.missed.slice(),true),'primary'));
+  if(tab===8)bar.append(button('Összeállítás módosítása',activate));
   bar.append(button('Új kör',()=>startRound(questions())),button('Vissza a leckéhez',()=>{tab=0;activate();}));
 }
 el('level').addEventListener('change',e=>{level=e.target.value;save('level',level);activate();});
 activate();
+
