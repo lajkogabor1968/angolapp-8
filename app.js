@@ -177,11 +177,18 @@ function reading() {
 }
 function vocabulary() {
   audioHeading('Szókincs');
+  const search=node('input'); search.type='search'; search.placeholder='Keresés angolul vagy magyarul'; search.setAttribute('aria-label','Szókincs keresése');
+  const filter=button('Csak a még nem megtanult szavak',()=>{onlyNew=!onlyNew;filter.setAttribute('aria-pressed',String(onlyNew));refresh();});
+  let onlyNew=false; const learned=load('learned',{}); const rows=[];
+  const summary=node('p',undefined,'note'); content.append(search,filter,summary);
+  function refresh(){const term=search.value.trim().toLocaleLowerCase('hu'); let visible=0; for(const x of rows){const show=(!onlyNew||!learned[x.key])&&x.text.includes(term);x.row.hidden=!show;x.row.style.display=show?'':'none';if(show)visible++;} summary.textContent=rows.filter(x=>learned[x.key]).length+' / '+rows.length+' megtanult szó · '+visible+' látható';}
+  search.addEventListener('input',refresh);
   current().vocab.forEach(([en,hu,phon],i)=>{
     const r=node('div',undefined,'row audio-row'),words=node('div');
     words.append(english('span',en,'en'),node('span',' – '+hu),node('p',phon,'phon'));
-    r.append(words,listenButton('vocab',i,i,'▶','Felolvasás: '+en));content.append(r);
-  });
+    const key=current().id+'|'+en+'|'+hu; const mark=button(learned[key]?'✓ Tudom':'Tanulom',()=>{learned[key]=!learned[key];save('learned',learned);mark.textContent=learned[key]?'✓ Tudom':'Tanulom';mark.setAttribute('aria-pressed',String(!!learned[key]));refresh();}); mark.setAttribute('aria-pressed',String(!!learned[key]));
+    words.append(mark);r.append(words,listenButton('vocab',i,i,'▶','Felolvasás: '+en));content.append(r);rows.push({row:r,key,text:(en+' '+hu).toLocaleLowerCase('hu')});
+  });refresh();
 }
 function grammar() {
   content.append(node('h3','Nyelvtan'));
