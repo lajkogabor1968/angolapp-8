@@ -1,6 +1,6 @@
 // Angolapp 8 – a meglévő táblázathoz kötött Apps Script.
-// A setup futtatását és a webalkalmazás telepítését a tulajdonos végzi.
-function setup() {
+// A setup_ futtatását és a webalkalmazás telepítését a tulajdonos végzi.
+function setup_() {
   const ss=SpreadsheetApp.getActiveSpreadsheet();
   if(!ss || !ss.getSheetByName('Dolgozatok') || !ss.getSheetByName('Kérdésbank')) throw Error('Nem a megfelelő táblázat.');
   PropertiesService.getScriptProperties().setProperty('SHEET_ID',ss.getId());
