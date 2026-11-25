@@ -1,7 +1,8 @@
 'use strict';
 const el = id => document.getElementById(id);
 const sections = ['Olvasmány','Szókincs','Nyelvtan','Reading','Listening','Writing','Gyakorlás','Lecketeszt'];
-const subtitles = ['Ismétlés','Újrahasznosítás','A jövő technológiája','Élet a jövőben'];
+let slow = load('slow', false);
+let activeAudio = null;
 function load(key, fallback) {
   try { return JSON.parse(localStorage.getItem('angolapp8.' + key)) ?? fallback; }
   catch { return fallback; }
@@ -34,14 +35,24 @@ function detail(label, parent) {
 }
 function stopAudio() {
   playback++;
+  if (activeAudio) {
+    activeAudio.textContent = activeAudio.dataset.idle;
+    activeAudio.setAttribute('aria-label',activeAudio.dataset.label);
+    activeAudio = null;
+  }
   if (source) { source.onended = null; try { source.stop(); } catch {} source = null; }
   el('soundStatus').textContent = '';
 }
-async function play(group, from, to, rate) {
+async function play(trigger, group, from, to) {
+  const same = activeAudio === trigger;
   stopAudio();
+  if (same) return;
+  activeAudio = trigger;
+  trigger.textContent = trigger.dataset.idle === '▶' ? '■' : '■ Leállítás';
+  trigger.setAttribute('aria-label','Leállítás');
   const token = playback, id = current().id;
-  const track = rate < 1 ? id + '-slow' : id;
-  const index = (rate < 1 ? slowIndex : audioIndex)[id];
+  const track = slow ? id + '-slow' : id;
+  const index = (slow ? slowIndex : audioIndex)[id];
   try {
     context ||= new (window.AudioContext || window.webkitAudioContext)();
     await context.resume();
@@ -58,14 +69,50 @@ async function play(group, from, to, rate) {
     source = context.createBufferSource();
     source.buffer = buffer;
     source.connect(context.destination);
+    source.onended = () => { if (token === playback) stopAudio(); };
     source.start(0, start, end + tail - start);
-  } catch { if(token===playback) el('soundStatus').textContent='A hang nem indult el. Ellenőrizd a kapcsolatot, majd nyomd meg újra a lejátszást.'; }
+  } catch {
+    if (token !== playback) return;
+    stopAudio();
+    el('soundStatus').textContent='A hang nem indult el. Próbáld újra!';
+  }
 }
-function controls(parent, group, from, to=from) {
-  const bar=node('div',undefined,'sound');
-  bar.append(button('▶ Normál hang',()=>play(group,from,to,1)),
-    button('▷ Lassú hang',()=>play(group,from,to,.78)),
-    button('Leállítás',stopAudio));parent.append(bar);
+function listenButton(group, from, to, caption, label) {
+  const b=button(caption,()=>play(b,group,from,to),'listen');
+  b.dataset.idle=caption;
+  b.dataset.label=label;
+  b.setAttribute('aria-label',label);
+  b.title=label;
+  return b;
+}
+function speedSwitch() {
+  const label=node('label',undefined,'speed');
+  const input=node('input'); input.type='checkbox'; input.checked=slow;
+  input.addEventListener('change',()=>{
+    slow=input.checked; save('slow',slow); stopAudio();
+  });
+  label.append(input,document.createTextNode('Lassú hang'));
+  return label;
+}
+function sectionNav() {
+  const nav=el('tabs');
+  nav.replaceChildren();
+  const go=i=>{tab=i;activate();};
+  const addTab=i=>{
+    const b=button(sections[i],()=>go(i));
+    b.setAttribute('aria-current',String(tab===i)); nav.append(b);
+  };
+  [0,1,2].forEach(addTab);
+  const select=node('select'); select.setAttribute('aria-label','Gyakorlófeladatok');
+  const placeholder=node('option','Feladatok'); placeholder.value='';placeholder.disabled=true;
+  select.append(placeholder);
+  ['Olvasásértés','Hallásértés','Írás','Vegyes gyakorlás'].forEach((name,i)=>{
+    const option=node('option',name);option.value=String(i+3);select.append(option);
+  });
+  select.value=tab>=3 && tab<=6 ? String(tab) : '';
+  select.classList.toggle('selected',select.value!=='');
+  select.addEventListener('change',()=>go(Number(select.value)));
+  nav.append(select); addTab(7);
 }
 function chooseNav(parent, names, selected, action) {
   parent.replaceChildren();
@@ -80,10 +127,9 @@ function activate() {
   chooseNav(el('chapters'),lessons.map((l,i)=>i?l.title:'Hello · Ismétlés'),unit,i=>{
     unit=i;tab=0;save('lesson',current().id);activate();
   });
-  chooseNav(el('tabs'),sections,tab,i=>{tab=i;activate();});
-  el('theme').textContent=subtitles[unit];el('lesson').textContent=current().title;
-  const best=load('best',{})[current().id+'-'+level];
-  el('best').textContent=best===undefined?current().theme:'Legjobb lecketeszt ezen a szinten: '+best+'%';
+  sectionNav();
+  el('lesson').textContent=current().title;
+  el('theme').textContent=current().theme;
   if(tab===0) reading();
   else if(tab===1) vocabulary();
   else if(tab===2) grammar();
@@ -91,40 +137,57 @@ function activate() {
 }
 function readingRows(parent,group) {
   const rows=current()[group];
-  controls(parent,group,0,rows.length-1);
+  const bar=node('div',undefined,'reader-tools');
+  const main=listenButton(group,0,rows.length-1,'▶ Felolvasás','Teljes olvasmány felolvasása');
+  const list=node('div',undefined,'sentences');
+  const help=button('Fordítás és kiejtés',()=>{
+    setHelp(help.getAttribute('aria-pressed')!=='true');
+  });
+  function setHelp(visible) {
+    help.setAttribute('aria-pressed',String(visible));
+    list.classList.toggle('with-help',visible);
+  }
+  setHelp(level!=='normal');
+  bar.append(main,help);
+  parent.append(bar,list);
   rows.forEach(([en,hu,phon],i)=>{
-    const r=node('div',undefined,'row');r.append(english('p',en,'en'));
-    if(level==='sni') r.append(node('p',hu),node('p',phon,'phon'));
-    else {
-      const d=detail('Fordítás és kiejtés',r);d.open=level==='btmn';
-      d.append(node('p',hu),node('p',phon,'phon'));
-    }
-    controls(r,group,i);parent.append(r);
+    const r=node('div',undefined,'row audio-row'),words=node('div');
+    words.append(english('p',en,'en'),node('p',hu,'translation'),node('p',phon,'phon'));
+    r.append(words,listenButton(group,i,i,'▶','Felolvasás: '+en));
+    list.append(r);
   });
 }
+function audioHeading(title) {
+  const h=node('div',undefined,'audio-heading');h.append(node('h3',title),speedSwitch());
+  content.append(h);
+}
 function reading() {
-  content.append(node('h3','Olvasmány'),node('p','Hallgasd meg egyben, majd mondd utána mondatonként. A magyar betűs kiejtés közelítés. A th hanghoz tedd a nyelved hegyét a fogsorok közé.','note'));
+  audioHeading('Olvasmány');
   if (level==='sni') {readingRows(content,'short');readingRows(detail('Hosszabb olvasmány',content),'reading');}
   else readingRows(content,'reading');
   if(current().poster) {
-    const poster=detail('Recycling Day · Mit tudunk meg a tankönyvi plakátról?',content);
+    const poster=detail('Recycling Day · Program',content);
     current().poster.forEach(line=>poster.append(node('p',line)));
-    poster.append(node('p','A könyv eredeti hangfelvétele nem áll rendelkezésre. A Listening részben egy másik iskolai program saját hanganyagával gyakorolhatsz.','note'));
+    
   }
   const [title,prompt,examples]=current().talk;
   const d=detail('Beszédgyakorlat · '+title,content);
   d.append(node('p',prompt),english('p',examples,'en'));
 }
 function vocabulary() {
-  content.append(node('h3','Szókincs'),node('p','Olvasd fel a szót, majd hasonlítsd össze a hangmintával.','note'));
+  audioHeading('Szókincs');
   current().vocab.forEach(([en,hu,phon],i)=>{
-    const r=node('div',undefined,'row');r.append(english('p',en,'en'),node('p',hu+' · '+phon));controls(r,'vocab',i);content.append(r);
+    const r=node('div',undefined,'row audio-row'),words=node('div');
+    words.append(english('span',en,'en'),node('span',' – '+hu),node('p',phon,'phon'));
+    r.append(words,listenButton('vocab',i,i,'▶','Felolvasás: '+en));content.append(r);
   });
 }
 function grammar() {
   content.append(node('h3','Nyelvtan'));
-  current().grammar.forEach(([title,en,hu,rule])=>{
-    const r=node('div',undefined,'row');r.append(node('h4',title),node('p',rule),english('p',en,'en'),node('p',hu));content.append(r);
+  current().grammar.forEach(([title,en,hu,rule],i)=>{
+    const d=detail(title,content);
+    d.open=i===0;
+    d.append(node('p',rule),english('p',en,'en'),node('p',hu));
   });
 }
 function shuffled(xs) {
@@ -170,17 +233,20 @@ function questions() {
   return shuffled([...shuffled(comprehension).slice(0,easy?1:2),...shuffled(listening).slice(0,easy?1:2),...shuffled(writing).slice(0,easy?1:2),...shuffled(vocab).slice(0,easy?1:mid?2:3),...shuffled(easy?gram.slice(0,4):gram).slice(0,easy?2:mid?3:4)]);
 }
 const infos=[
- 'Olvasd el a szöveget, és válaszolj a tartalmára vonatkozó kérdésekre.',
- 'Hallgasd meg az új angol hangrészletet, és válaszd ki a jelentésének megfelelő választ. A hangot többször is lejátszhatod.',
- 'Írj angolul. A kis- és nagybetűket, a mondatvégi írásjeleket és az ismert rövidítéseket rugalmasan javítjuk.',
- 'Szavak jelentését és mondatokba illő nyelvtani alakokat gyakorolhatsz.',
- 'A lecketesztben szókincs, nyelvtan, olvasás, hallásértés és írás is szerepel. A százalék az elsőre helyes válaszok aránya.'
+  'Olvasd el a szöveget, majd válaszolj!',
+  'Hallgasd meg a részletet, majd válassz!',
+  'Írd be a választ angolul!',
+  'Gyakorold a szavakat és a nyelvtant!',
+  'Az elsőre helyes válaszokért jár pont.'
 ];
 function introduction() {
+  const items=questions();
   content.append(node('h3',sections[tab]),node('p',infos[tab-3]));
-  const count=questions().length;
-  const hint=level==='sni'?'Rövidebb feladatok, két válaszlehetőség és írásnál szókezdő segítség.':level==='btmn'?'Íráskor kérhetsz mondatkezdést, olvasáskor megnyithatod a fordítást.':'Önálló feladatmegoldás.';
-  content.append(node('p',count+' feladat · '+hint,'note'),button('Kezdés',()=>startRound(questions()),'primary'));
+  if(tab===7) {
+    const best=load('best',{})[current().id+'-'+level];
+    if(best!==undefined)content.append(node('p','Eddigi legjobb: '+best+'%','note'));
+  }
+  content.append(button('Kezdés · '+items.length+' feladat',()=>startRound(items),'primary'));
 }
 function startRound(items,review=false) {
   round={items,index:0,first:0,fixed:0,missed:[],attempts:0,review};
@@ -200,8 +266,13 @@ function show() {
       else if(level==='btmn')detail('Magyarul',r).append(node('p',hu));
     });
   }
-  if(q.audio!==undefined)controls(content,'listen',q.audio);
+
   const label=node('p',q.prompt,'question');label.id='taskPrompt';content.append(label);
+  if(q.audio!==undefined){
+    const bar=node('div',undefined,'reader-tools');
+    bar.append(listenButton('listen',q.audio,q.audio,'▶ Meghallgatás','Hangrészlet meghallgatása'),speedSwitch());
+    content.append(bar);
+  }
   if(q.context)content.append(english('p',q.context,'en'));
   const box=node('div',undefined,'options'), feedback=node('div',undefined,'status'),actions=node('div',undefined,'actions');
   feedback.setAttribute('role','status');content.append(box,feedback,actions);
@@ -245,7 +316,8 @@ function finish() {
   if(round.fixed)content.append(node('p','Újabb próbálkozással megoldva: '+round.fixed+'.'));
   if(tab===7 && !round.review) {
     const best=load('best',{}),key=current().id+'-'+level;best[key]=Math.max(best[key]??0,pct);
-    save('best',best);el('best').textContent='Legjobb lecketeszt ezen a szinten: '+best[key]+'%';
+    save('best',best);
+    content.append(node('p','Ezen az eszközön a legjobbad: '+best[key]+'%','note'));
   }
   const bar=node('div',undefined,'actions');content.append(bar);
   if(round.missed.length)bar.append(button('Hibás feladatok újra ('+round.missed.length+')',()=>startRound(round.missed.slice(),true),'primary'));
