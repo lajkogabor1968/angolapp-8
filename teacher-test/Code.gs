@@ -22,9 +22,10 @@ function startTest(data){
   const questions=shuffle_(rows).slice(0,n).map(r=>{const options=shuffle_(level==='SNI'?[r[2],r[3]]:r.slice(2,5));return {prompt:r[1],options,correct:options.indexOf(r[2])};});
   if(!questions.length)throw Error('Üres kérdésbank.');
   const token=Utilities.getUuid();
-  CacheService.getScriptCache().put('test:'+token,JSON.stringify({questions}),7200);
+  const snapshot=JSON.stringify({questions});
+  if(snapshot.length>45000)throw Error('A dolgozat túl nagy.');
   const lock=LockService.getScriptLock();lock.waitLock(10000);
-  try{out.appendRow([safe_(name),safe_(cls),level,new Date(),'Folyamatban','','','','',0,new Date(),'Elindult',token]);SpreadsheetApp.flush();}finally{lock.releaseLock();}
+  try{out.appendRow([safe_(name),safe_(cls),level,new Date(),'Folyamatban','','','','',0,new Date(),'Elindult',token,snapshot,'']);SpreadsheetApp.flush();}finally{lock.releaseLock();}
   return {token,questions:questions.map(q=>({prompt:q.prompt,options:q.options}))};
 }
 function submitTest(data){
@@ -37,13 +38,15 @@ function submitTest(data){
     if(!cell)throw Error('Ismeretlen munkamenet.');
     const row=cell.getRow(),old=sh.getRange(row,5,1,8).getValues()[0];
     if(old[0]==='Leadva')return {score:old[3],total:old[2],percent:Math.round(Number(old[4])*100)};
-    const raw=CacheService.getScriptCache().get('test:'+data.token);
-    if(!raw)throw Error('A munkamenet lejárt. Jelezd a tanárnak!');
+    const raw=sh.getRange(row,14).getValue();
+    if(!raw)throw Error('A kérdések mentése hiányzik. Jelezd a tanárnak!');
     const qs=JSON.parse(raw).questions;
     if(data.answers.length!==qs.length||data.answers.some((a,i)=>!Number.isInteger(a)||a<0||a>=qs[i].options.length))throw Error('Minden kérdésre válaszolj!');
     const score=qs.reduce((s,q,i)=>s+Number(data.answers[i]===q.correct),0),pct=score/qs.length;
     const leaves=Number.isInteger(data.leaves)?Math.max(0,Math.min(999,data.leaves)):0;
-    sh.getRange(row,5,1,8).setValues([['Leadva',new Date(),qs.length,score,pct,leaves,new Date(),'Mentve']]);
+    const details=qs.map((q,i)=>(i+1)+'. '+q.prompt+'\nLehetőségek: '+q.options.join(' | ')+'\nTanuló válasza: '+q.options[data.answers[i]]+'\nHelyes válasz: '+q.options[q.correct]+'\nPont: '+Number(data.answers[i]===q.correct)+'/1').join('\n\n');
+    if(details.length>45000)throw Error('A részletes eredmény túl nagy.');
+    sh.getRange(row,5,1,11).setValues([['Leadva',new Date(),qs.length,score,pct,leaves,new Date(),'Mentve',data.token,raw,details]]);
     sh.getRange(row,9).setNumberFormat('0%');
     SpreadsheetApp.flush();
     return {score,total:qs.length,percent:Math.round(pct*100)};
