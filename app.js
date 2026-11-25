@@ -182,7 +182,7 @@ function vocabulary() {
   let onlyNew=false; const learned=load('learned',{}); const rows=[];
   const summary=node('p',undefined,'note'); content.append(search,filter,summary);
   function refresh(){const term=search.value.trim().toLocaleLowerCase('hu'); let visible=0; for(const x of rows){const show=(!onlyNew||!learned[x.key])&&x.text.includes(term);x.row.hidden=!show;x.row.style.display=show?'':'none';if(show)visible++;} summary.textContent=rows.filter(x=>learned[x.key]).length+' / '+rows.length+' megtanult szó · '+visible+' látható';}
-  search.addEventListener('input',refresh);
+  filter.setAttribute('aria-pressed','false'); search.addEventListener('input',refresh);
   current().vocab.forEach(([en,hu,phon],i)=>{
     const r=node('div',undefined,'row audio-row'),words=node('div');
     words.append(english('span',en,'en'),node('span',' – '+hu),node('p',phon,'phon'));
@@ -367,9 +367,12 @@ function show() {
   }
 }
 function finish() {
-  const total=round.items.length,pct=Math.round(round.first/total*100);
+  const total=round.items.length,pct=total?Math.round(round.first/total*100):0;
   content.append(node('h3',round.review?'Javítógyakorlás eredménye':'Eredmény'),
     node('p',pct+'% · '+round.first+' / '+total+' elsőre helyes válasz.','question'));
+  if(pct===100)content.append(node('p','Gratulálok! Minden feladatot elsőre megoldottál.','success'));
+  else if(pct>=70)content.append(node('p','Ügyes munka! A hibás feladatok ismétlésével még jobb lehetsz.','note'));
+  else content.append(node('p','Minden gyakorlással fejlődsz. Próbáld meg újra a hibás feladatokat!','note'));
   if(round.fixed)content.append(node('p','Újabb próbálkozással megoldva: '+round.fixed+'.'));
   if(tab===7 && !round.review) {
     const best=load('best',{}),key=current().id+'-'+level;best[key]=Math.max(best[key]??0,pct);
