@@ -175,8 +175,66 @@ function reading() {
   const d=detail('Beszédgyakorlat · '+title,content);
   d.append(node('p',prompt),english('p',examples,'en'));
 }
+let vocabMode='mixed';
+const vocabKey=(lesson,i)=>lesson.id+'|'+lesson.vocab[i][0]+'|'+lesson.vocab[i][1];
+function difficultWords(){return load('vocabDifficult',{});}
+function wordQuestion(i,mode,lesson=current()){
+  const [en,hu,phon]=lesson.vocab[i], key=vocabKey(lesson,i);
+  if(mode==='mixed')mode=(level==='sni'?['enhu','huen','listen']:['enhu','huen','listen','write'])[i%(level==='sni'?3:4)];
+  const extra={wordKey:key,wordEn:en,wordHu:hu,wordIndex:i,lessonId:lesson.id};
+  if(mode==='write'){
+    if(level==='sni'){
+      const others=[...new Set(lesson.vocab.filter(w=>w[1]!==hu&&w[0]!==en).map(w=>w[0]))];
+      return choices(['Válaszd ki az angol szót! '+hu,en,...others],{...extra,context:'Első betű: '+en[0]});
+    }
+    return {...extra,prompt:'Írd be angolul: '+hu,answer:en,hint:'Első betű: '+en[0]+' · '+phon,wordWrite:true};
+  }
+  const dir=mode==='huen'?1:0, answer=lesson.vocab[i][1-dir],term=lesson.vocab[i][dir];
+  const others=[...new Set(lesson.vocab.filter(w=>w[dir]!==term&&w[1-dir]!==answer).map(w=>w[1-dir]))];
+  return choices([mode==='listen'?'Hallgasd meg a szót! Mit jelent?':dir?'Hogyan mondod angolul? '+term:'Mit jelent magyarul? '+term,answer,...others],{...extra,...(mode==='listen'?{wordAudio:i}:{})});
+}
+function wordRound(mode=vocabMode){
+  const lesson=current(),hard=difficultWords();
+  let ids=lesson.vocab.map((_,i)=>i);
+  if(mode==='hard')ids=ids.filter(i=>hard[vocabKey(lesson,i)]);
+  const limit=level==='sni'?5:level==='btmn'?8:10;
+  return shuffled(ids).slice(0,limit).map(i=>wordQuestion(i,mode==='hard'?'mixed':mode,lesson));
+}
+function flashcards(){
+  stopAudio();content.replaceChildren();
+  const lesson=current(),ids=shuffled(lesson.vocab.map((_,i)=>i)),hard=difficultWords(),learned=load('learned',{});
+  let index=0,reverse=false,known=0;
+  function draw(){
+    stopAudio();content.replaceChildren();
+    content.append(node('h3','Szókártyák'),button('Vissza a szókincshez',activate));
+    if(index>=ids.length){content.append(node('p','Végignézted az összes kártyát! '+known+' szót már tudsz.','success'),button('Új kör',flashcards,'primary'),button('Szóteszt indítása',()=>{vocabMode='mixed';startRound(wordRound());},'primary'));return;}
+    const i=ids[index],[en,hu,phon]=lesson.vocab[i],key=vocabKey(lesson,i);
+    const meter=node('progress');meter.max=ids.length;meter.value=index;meter.setAttribute('aria-label','Szókártyák haladása');content.append(node('p',(index+1)+' / '+ids.length),meter);
+    const switcher=button(reverse?'Magyar → angol':'Angol → magyar',()=>{reverse=!reverse;draw();});content.append(switcher);
+    const card=node('div',undefined,'panel');
+    card.append(reverse?node('p',hu,'question'):english('p',en,'question'));
+    if(!reverse)card.append(listenButton('vocab',i,i,'▶ Meghallgatás','Szó meghallgatása',lesson.id),speedSwitch());
+    const reveal=button('Mutasd a megoldást',()=>{
+      reveal.remove();
+      card.append(reverse?english('p',en,'question'):node('p',hu,'question'),node('p',phon,'phon'));
+      if(reverse)card.append(listenButton('vocab',i,i,'▶ Meghallgatás','Szó meghallgatása',lesson.id),speedSwitch());
+      const bar=node('div',undefined,'actions');
+      function next(ok){learned[key]=ok;hard[key]=!ok;save('learned',learned);save('vocabDifficult',hard);if(ok)known++;index++;draw();}
+      bar.append(button('Még gyakorlom',()=>next(false)),button('Tudom',()=>next(true),'primary'));card.append(bar);
+    },'primary');card.append(reveal);content.append(card);
+  }draw();
+}
 function vocabulary() {
   audioHeading('Szókincs');
+  const panel=node('div',undefined,'panel');
+  panel.append(node('h4','Szótanulás és szótesztek'),node('p','Válassz gyakorlási módot! Minden feladat után azonnali visszajelzést kapsz.'));
+  const tools=node('div',undefined,'actions');
+  tools.append(button('Szókártyák',flashcards,'primary'));
+  const modes=[['enhu','Angol → magyar'],['huen','Magyar → angol'],['listen','Hallás utáni szófelismerés'],['write',level==='sni'?'Angol szó kiválasztása':'Angol szó beírása'],['mixed','Vegyes szóteszt']];
+  modes.forEach(([mode,label])=>tools.append(button(label,()=>{vocabMode=mode;startRound(wordRound(mode));})));
+  const hardCount=current().vocab.filter((_,i)=>difficultWords()[vocabKey(current(),i)]).length;
+  const hardButton=button('Nehéz szavak ismétlése ('+hardCount+')',()=>{vocabMode='hard';const items=wordRound();if(items.length)startRound(items);else activate();});hardButton.disabled=!hardCount;tools.append(hardButton);panel.append(tools);content.append(panel);
+  content.append(node('h4','Szótár és kiejtés'));
   const search=node('input'); search.type='search'; search.placeholder='Keresés angolul vagy magyarul'; search.setAttribute('aria-label','Szókincs keresése');
   const filter=button('Csak a még nem megtanult szavak',()=>{onlyNew=!onlyNew;filter.setAttribute('aria-pressed',String(onlyNew));refresh();});
   let onlyNew=false; const learned=load('learned',{}); const rows=[];
@@ -276,6 +334,7 @@ function customSetup() {
 }
 
 function questions() {
+  if(tab===1)return wordRound();
   if(tab===8)return customItems();
   const l=current(), easy=level==='sni', mid=level==='btmn';
   const comprehension=l.readQs.slice(0,easy?2:4).map(row=>choices(row,{read:true}));
@@ -330,6 +389,10 @@ function show() {
     bar.append(listenButton('listen',q.audio,q.audio,'▶ Meghallgatás','Hangrészlet meghallgatása',q.lessonId),speedSwitch());
     content.append(bar);
   }
+  if(q.wordAudio!==undefined){
+    const bar=node('div',undefined,'reader-tools');
+    bar.append(listenButton('vocab',q.wordAudio,q.wordAudio,'▶ Meghallgatás','Szó meghallgatása',q.lessonId),speedSwitch());content.append(bar);
+  }
   if(q.context)content.append(english('p',q.context,'en'));
   const box=node('div',undefined,'options'), feedback=node('div',undefined,'status'),actions=node('div',undefined,'actions');
   feedback.setAttribute('role','status');content.append(box,feedback,actions);
@@ -337,19 +400,21 @@ function show() {
   function done(correct, revealed=false) {
     if(completed)return;
     if(!correct&&!revealed) {
-      if(round.attempts++===0)round.missed.push(q);
+      if(round.attempts++===0){round.missed.push(q);if(q.wordKey){const hard=difficultWords();hard[q.wordKey]=true;save('vocabDifficult',hard);}}
       feedback.className='retry';feedback.textContent='Még nem pontos. Próbáld újra!';
       if(!actions.childElementCount)actions.append(button('Megoldás mutatása',()=>done(false,true)));
       if(input)input.focus();
       return;
     }
     completed=true;
+    if(q.wordKey){const hard=difficultWords();hard[q.wordKey]=!(correct&&!round.attempts);save('vocabDifficult',hard);}
     if(correct && !round.attempts)round.first++;
     if(correct && round.attempts)round.fixed++;
     box.querySelectorAll('button,input').forEach(b=>b.disabled=true);
     feedback.className=correct?'success':'retry';
     feedback.textContent=(correct?(round.attempts?'Sikerült javítanod! ':'Helyes! '):'Megoldás: ')+q.answer;
     if(q.transcript)feedback.append(english('p',q.transcript));
+    if(q.wordKey){feedback.append(node('p',q.wordEn+' – '+q.wordHu),listenButton('vocab',q.wordIndex,q.wordIndex,'▶ Kiejtés','Szó kiejtése',q.lessonId));}
     actions.replaceChildren(button(round.index+1===total?'Eredmény':'Tovább',()=>{round.index++;round.attempts=0;show();},'primary'));
     actions.firstChild.focus({preventScroll:true});
   }
@@ -361,7 +426,7 @@ function show() {
       done([q.answer,...(q.alternatives||[])].some(s=>normalized(s)===normalized(input.value)));};
     input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!completed){e.preventDefault();check();}});
     box.append(input);
-    if(level==='sni')box.append(node('p',q.hint,'note'));
+    if(level==='sni' && q.hint)box.append(node('p',q.hint,'note'));
     if(level==='btmn')detail('Kérek segítséget',box).append(node('p',q.hint));
     box.append(button('Ellenőrzés',check,'primary'));
   }
@@ -382,6 +447,7 @@ function finish() {
   const bar=node('div',undefined,'actions');content.append(bar);
   if(round.missed.length)bar.append(button('Hibás feladatok újra ('+round.missed.length+')',()=>startRound(round.missed.slice(),true),'primary'));
   if(tab===8)bar.append(button('Összeállítás módosítása',activate));
+  if(tab===1){bar.append(button('Vissza a szókincshez',activate));if(vocabMode==='hard'&&!wordRound().length){bar.append(button('Új vegyes szóteszt',()=>{vocabMode='mixed';startRound(wordRound());}));return;}}
   bar.append(button('Új kör',()=>startRound(questions())),button('Vissza a leckéhez',()=>{tab=0;activate();}));
 }
 el('level').addEventListener('change',e=>{level=e.target.value;save('level',level);activate();});
